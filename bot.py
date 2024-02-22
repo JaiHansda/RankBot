@@ -1,79 +1,75 @@
-from pyrogram import Client, filters
-from pymongo import MongoClient
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-import os
-from datetime import datetime, timedelta
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-API_ID = os.environ.get("17271772")
-API_HASH = os.environ.get("897542330c90728e4e7fef57f42f9c79")
-BOT_TOKEN = os.environ.get("6800038806:AAHWUqskk6A0Ht2vhRhk-kN3_OmFAERpGIQ")
-MONGO_URL = os.environ.get("mongodb+srv://Aditya:Aditya@cluster0.c3pct2l.mongodb.net/?retryWrites=true&w=majority")
+bot_token = '6800038806:AAHWUqskk6A0Ht2vhRhk-kN3_OmFAERpGIQ'
+bot = telebot.TeleBot(bot_token)
 
-bot = Client("GroupStatsBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+users_exp = {}
+users_level = {}
+users_rewards = {}
+users_guild = {}
 
-mongo_client = MongoClient(MONGO_URL)
-db = mongo_client["GroupStatsBotDB"]
-
-@bot.on_message(filters.group)
-async def track_messages(client, message):
+@bot.message_handler(func=lambda message: True)
+def handle_messages(message):
     user_id = message.from_user.id
-    chat_id = message.chat.id
+    if user_id not in users_exp:
+        users_exp[user_id] = 0
+        users_level[user_id] = 0
+        users_rewards[user_id] = []
+        users_guild[user_id] = 'No Guild'
 
-    user_data = db.users.find_one({"user_id": user_id, "chat_id": chat_id})
-    if user_data:
-        # Update user's message count
-        db.users.update_one({"user_id": user_id, "chat_id": chat_id}, {"$inc": {"message_count": 1}})
-    else:
-        # Create user profile if it doesn't exist
-        db.users.insert_one({"user_id": user_id, "chat_id": chat_id, "message_count": 1, "level": 1, "xp": 0, "labels": []})
+    users_exp[user_id] += 10
+    if users_exp[user_id] >= 1000:
+        users_exp[user_id] = 0
+        users_level[user_id] += 1
+        users_rewards[user_id].append("Naruto Headband")
+    
+    if "spam" in message.text.lower():
+        users_exp[user_id] -= 50
+        if users_exp[user_id] < 0:
+            users_exp[user_id] = 0
 
-@bot.on_message(filters.command(["profile"]))
-async def view_profile(client, message):
+@bot.callback_query_handler(func=lambda call: True)
+def handle_button_click(call):
+    user_id = call.message.chat.id
+    action = call.data.split(':')[0]
+    target_user_id = int(call.data.split(':')[1])
+
+    if action == 'give_exp':
+        users_exp[target_user_id] += 50
+    elif action == 'take_exp':
+        users_exp[target_user_id] -= 50
+        if users_exp[target_user_id] < 0:
+            users_exp[target_user_id] = 0
+
+@bot.message_handler(commands=['profile'])
+def profile(message):
     user_id = message.from_user.id
-    chat_id = message.chat.id
+    level = users_level[user_id]
+    guild = users_guild[user_id]
+    rewards = ', '.join(users_rewards[user_id])
+    bot.reply_to(message, f"Level: {level}\nGuild: {guild}\nRewards: {rewards}")
 
-    user_data = db.users.find_one({"user_id": user_id, "chat_id": chat_id})
-    if user_data:
-        level = user_data["level"]
-        xp = user_data["xp"]
-        message_count = user_data["message_count"]
-        labels = user_data["labels"]
-        await message.reply_text(f"Level: {level}\nXP: {xp}\nMessages: {message_count}\nLabels: {', '.join(labels)}", reply_markup=get_profile_buttons())
-    else:
-        await message.reply_text("You haven't sent any messages in this group yet.")
+@bot.message_handler(commands=['leaderboard'])
+def leaderboard(message):
+    sorted_users = sorted(users_exp, key=lambda x: users_exp[x], reverse=True)
+    leaderboard_text = "Leaderboard:\n"
+    for i, user_id in enumerate(sorted_users[:10]):
+        username = bot.get_chat_member(message.chat.id, user_id).user.username
+        leaderboard_text += f"{i+1}. {username} - Level {users_level[user_id]}\n"
+    
+    bot.reply_to(message, leaderboard_text)
 
-async def get_profile_buttons():
-    keyboard = [
-        [InlineKeyboardButton("Level Up", callback_data="level_up")],
-        [InlineKeyboardButton("Leaderboard", callback_data="leaderboard")],
-        [InlineKeyboardButton("Labels Locker", callback_data="labels_locker")],
-        [InlineKeyboardButton("Challenges", callback_data="challenges")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+@bot.message_handler(commands=['guild'])
+def set_guild(message):
+    guild_name = message.text.split()[-1]
+    user_id = message.from_user.id
+    users_guild[user_id] = guild_name
+    bot.reply_to(message, f"You have joined the guild: {guild_name}")
 
-@bot.on_callback_query()
-async def handle_button_click(client, callback_query):
-    user_id = callback_query.from_user.id
-    chat_id = callback_query.message.chat.id
+@bot.message_handler(commands=['help'])
+def help(message):
+    help_text = "Available commands:\n/profile - View your profile\n/leaderboard - View the leaderboard\n/guild [name] - Join a guild\n/help - Show this help message"
+    bot.reply_to(message, help_text)
 
-    if callback_query.data == "level_up":
-        # Handle level-up button click
-        # Add logic for level-up rewards or actions
-        pass
-    elif callback_query.data == "leaderboard":
-        # Handle leaderboard button click
-        # Add logic to display the leaderboard
-        pass
-    elif callback_query.data == "labels_locker":
-        # Handle labels locker button click
-        # Add logic to display and manage labels
-        pass
-    elif callback_query.data == "challenges":
-        # Handle challenges button click
-        # Add logic to display and monitor challenges
-        pass
-
-# Add more commands, such as leaderboard, labels, challenges, etc.
-
-bot.run()
-  
+bot.polling()
